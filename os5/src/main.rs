@@ -44,6 +44,7 @@ pub fn rust_main() -> ! {
     logging::init();
     println!("[kernel] Hello, world!");
     mm::init();
+    info!("after mm init!");
     mm::remap_test();
     task::add_initproc();
     info!("after initproc!");
@@ -51,6 +52,6 @@ pub fn rust_main() -> ! {
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     loader::list_apps();
-    task::run_tasks();
+    task::run_next_task();
     panic!("Unreachable in rust_main!");
 }
