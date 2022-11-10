@@ -29,6 +29,7 @@ __alltraps:
     ld t0, 34*8(sp)
     # load trap_handler into t1
     ld t1, 36*8(sp)
+    # load kernel_stack_sp (&task) into a0
     ld a0, 35*8(sp)
     mv sp, a0
     # move to kernel_sp

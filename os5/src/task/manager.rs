@@ -36,14 +36,14 @@ impl TaskManager {
                 None => continue,
                 Some(task) => task,
             };
-            let cur_state = task.inner_exclusive_access().state();
+            let cur_state = { task.inner_exclusive_access().state() };
             if cur_state == TaskState::UnInit {
                 task.from(app_id);
             }
-            let mut inner = task.inner_exclusive_access();
-            if inner.state() == TaskState::Ready {
+            let cur_state = { task.inner_exclusive_access().state() };
+            if cur_state == TaskState::Ready {
+                task.inner_exclusive_access().set_state(TaskState::Running);
                 self.next_task = app_id + 1;
-                inner.set_state(TaskState::Running);
                 return Some(task);
             }
         }

@@ -212,10 +212,13 @@ impl MemorySet {
             ),
             None,
         );
+        let entrypoint = elf.header.pt2.entry_point() as usize;
+        // log::debug!("entrypoint = 0x{:x}", entrypoint);
+        // assert!(entrypoint != 0);
         (
             memory_set,
             user_stack_top,
-            elf.header.pt2.entry_point() as usize,
+            entrypoint,
         )
     }
     /// Copy an identical user_space

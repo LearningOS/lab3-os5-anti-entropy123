@@ -29,7 +29,7 @@ impl Syscall {
             222 => Self::Mmap,         // 0xde
             410 => Self::TaskInfo,     // 0x19a
             _ => {
-                log::info!("unsupported syscall: {}", n.to_string());
+                log::warn!("unsupported syscall: {}", n.to_string());
                 return Err(());
             }
         })
@@ -51,28 +51,33 @@ impl Syscall {
             _ => todo!("unsupported syscall handle function, syscall={:?}", self),
         };
         let ret = ret.unwrap_or(-1);
-        let mut inner = task.inner_exclusive_access();
-        inner.trap_ctx.set_reg_a(0, ret as usize);
+        let a0 = {
+            let mut inner = task.inner_exclusive_access();
+            inner.trap_ctx.set_reg_a(0, ret as usize);
+            inner.trap_ctx.reg_a(0)
+        };
         log::info!(
             "task_{} syscall ret={:x}, task.trap_ctx.x[10]={:x}",
             task.id,
             ret,
-            inner.trap_ctx.reg_a(0)
+            a0
         );
     }
 }
 
 pub fn syscall_handler(ctx: &mut Task) {
-    let mut inner = ctx.inner_exclusive_access();
-    let trap_ctx = &mut inner.trap_ctx;
-    let (syscall_num, a0, a1, a2) = (
-        trap_ctx.reg_a(7),
-        trap_ctx.reg_a(0),
-        trap_ctx.reg_a(1),
-        trap_ctx.reg_a(2),
-    );
-    inner.syscall_times[syscall_num] += 1;
-    drop(inner);
+    let (syscall_num, a0, a1, a2) = {
+        let trap_ctx = &mut ctx.inner_exclusive_access().trap_ctx;
+        (
+            trap_ctx.reg_a(7),
+            trap_ctx.reg_a(0),
+            trap_ctx.reg_a(1),
+            trap_ctx.reg_a(2),
+        )
+    };
+    {
+        ctx.inner_exclusive_access().syscall_times[syscall_num] += 1;
+    }
     let syscall = Syscall::from(syscall_num).unwrap_or_else(|_| sys_exit(ctx));
 
     log::info!(
@@ -86,8 +91,8 @@ pub fn syscall_handler(ctx: &mut Task) {
 }
 
 fn sys_write(task: &Task, fd: usize, buf: usize, len: usize) -> SyscallResult {
-    let inner = task.inner_exclusive_access();
-    let buf = inner
+    let buf = task
+        .inner_exclusive_access()
         .translate(buf)
         .expect(&format!("sys_write, receive bad buf addr? buf=0x{:x}", buf));
 
@@ -117,14 +122,16 @@ fn sys_gettimeofday(task: &Task, timeval_ptr: usize, _tz: usize) -> SyscallResul
 }
 
 fn sys_yield(task: &mut Task) -> ! {
-    let mut inner = task.inner_exclusive_access();
-    inner.set_state(TaskState::Ready);
+    {
+        task.inner_exclusive_access().set_state(TaskState::Ready)
+    }
     run_next_task();
 }
 
 pub fn sys_exit(task: &mut Task) -> ! {
-    let mut inner = task.inner_exclusive_access();
-    inner.set_state(TaskState::Exited);
+    {
+        task.inner_exclusive_access().set_state(TaskState::Exited)
+    }
     run_next_task()
 }
 
@@ -136,15 +143,20 @@ pub struct TaskInfo {
 }
 
 fn sys_taskinfo(task: &Task, user_info: usize) -> SyscallResult {
-    let inner = task.inner_exclusive_access();
-    let user_info = inner.translate(user_info).expect(&format!(
-        "task_{} sys_taskinfo, receive bad user_info addr? buf=0x{:x}",
-        task.id, user_info
-    ));
+    let (user_info, syscall_times) = {
+        let inner = task.inner_exclusive_access();
+        (
+            inner.translate(user_info).expect(&format!(
+                "task_{} sys_taskinfo, receive bad user_info addr? buf=0x{:x}",
+                task.id, user_info
+            )),
+            inner.syscall_times,
+        )
+    };
     let taskinfo = unsafe { &mut *(user_info as *mut TaskInfo) };
     *taskinfo = TaskInfo {
         state: TaskState::Running,
-        syscall_times: inner.syscall_times,
+        syscall_times,
         exec_time: get_time_ms() - task.start_time_ms,
     };
     log::debug!(

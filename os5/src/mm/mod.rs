@@ -20,18 +20,9 @@ pub use memory_set::{MapPermission, MemorySet, KERNEL_SPACE};
 pub use page_table::{translated_byte_buffer, PageTableEntry};
 use page_table::{PTEFlags, PageTable};
 
-use crate::task::Task;
-
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {
     heap_allocator::init_heap();
     frame_allocator::init_frame_allocator();
     KERNEL_SPACE.lock().activate();
-}
-
-type PageFaultResult = Result<(), ()>;
-
-pub fn page_fault_handler(ctx: &Task, va: VirtAddr) -> PageFaultResult {
-    // ctx.addr_space.
-    Ok(())
 }

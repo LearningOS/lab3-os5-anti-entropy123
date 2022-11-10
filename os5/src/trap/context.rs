@@ -2,7 +2,7 @@ use core::fmt::Display;
 
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
-use crate::mm::KERNEL_SPACE;
+use crate::{mm::{KERNEL_SPACE, VirtAddr}, config::{TRAMPOLINE, PAGE_SIZE}};
 
 use super::handler::trap_handler;
 
@@ -45,6 +45,11 @@ impl TrapContext {
 
     pub fn get_ptr(&mut self) -> usize {
         self as *mut TrapContext as usize
+    }
+
+    pub fn get_user_ptr(&mut self) -> usize {
+        let offset = VirtAddr::from(self.get_ptr()).page_offset();
+        TRAMPOLINE - PAGE_SIZE + offset
     }
 }
 

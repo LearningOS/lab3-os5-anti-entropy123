@@ -74,10 +74,6 @@ impl Task {
         self as *const _ as usize
     }
 
-    pub fn get_user_ptr(&self) -> usize {
-        TRAMPOLINE - core::mem::size_of::<Task>()
-    }
-
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskInner> {
         self.inner.exclusive_access()
     }
