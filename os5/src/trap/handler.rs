@@ -11,8 +11,10 @@ use riscv::register::{
 
 #[no_mangle]
 pub fn trap_handler(ctx: &mut Task) -> ! {
-    let trap_ctx = &mut ctx.trap_ctx;
+    let inner = ctx.inner_exclusive_access();
+    let trap_ctx = &inner.trap_ctx;
     log::debug!("task_{} trap_handler, task.trap_ctx={}", ctx.id, trap_ctx);
+    drop(inner);
     let scause = scause::read();
     let stval = stval::read();
 
@@ -22,12 +24,12 @@ pub fn trap_handler(ctx: &mut Task) -> ! {
         scause.cause(),
         stval
     );
-
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            trap_ctx.sepc += 4;
             syscall::syscall_handler(ctx);
-            ctx.set_state(TaskState::Ready);
+            let mut inner = ctx.inner_exclusive_access();
+            inner.set_state(TaskState::Ready);
+            inner.trap_ctx.sepc += 4;
             restore(ctx.get_ptr());
         }
         Trap::Exception(Exception::LoadPageFault) | Trap::Exception(Exception::StorePageFault) => {
@@ -45,7 +47,8 @@ pub fn trap_handler(ctx: &mut Task) -> ! {
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             log::info!("Timer interrupt.");
             set_next_trigger();
-            ctx.set_state(TaskState::Ready);
+            let mut inner = ctx.inner_exclusive_access();
+            inner.set_state(TaskState::Ready);
             run_next_task();
         }
         _ => {

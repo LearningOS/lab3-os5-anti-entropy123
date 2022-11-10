@@ -1,8 +1,9 @@
 mod manager;
+mod pid;
 mod task;
 
 use crate::{task::manager::TM, trap::restore};
-pub use task::{Task, TaskState};
+pub use task::{Task, TaskInner, TaskState};
 
 pub fn run_next_task() -> ! {
     let mut task_manager = TM.lock();
@@ -19,4 +20,5 @@ pub fn run_next_task() -> ! {
     restore(ctx_ptr)
 }
 
+// 将初始进程加入任务管理器.
 pub fn add_initproc() {}

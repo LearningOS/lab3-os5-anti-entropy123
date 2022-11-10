@@ -48,7 +48,7 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
-    /// Assume that no conflicts.
+    // Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,
         start_va: VirtAddr,
@@ -239,12 +239,16 @@ impl MemorySet {
                 PTEFlags::R | PTEFlags::W,
             );
         }
-        (
-            memory_set,
-            user_stack_top,
-            elf.header.pt2.entry_point() as usize,
-        )
+        let entrypoint = elf.header.pt2.entry_point();
+        log::debug!("parse elf, entrypoint={}", entrypoint);
+        assert!(
+            entrypoint != 0,
+            "get a wrong entrypoint (=0x{:?})?",
+            entrypoint
+        );
+        (memory_set, user_stack_top, entrypoint as usize)
     }
+
     pub fn activate(&self) {
         let satp = self.page_table.token();
         unsafe {

@@ -2,7 +2,6 @@ use crate::{
     config::*,
     loader::{get_num_app, setup_task_cx},
     task::{Task, TaskState},
-    timer::get_time_ms,
 };
 use lazy_static::lazy_static;
 use spin::Mutex;
@@ -29,7 +28,7 @@ impl TaskManager {
         }
     }
 
-    pub fn find_next_ready_task(&mut self) -> Option<&mut Task> {
+    pub fn find_next_ready_task(&mut self) -> Option<&Task> {
         let current = self.next_task;
         for i in current..(current + MAX_APP_NUM) {
             let app_id = i % 19;
@@ -37,16 +36,19 @@ impl TaskManager {
                 None => continue,
                 Some(task) => task,
             };
-            if task.state() == TaskState::UnInit {
-                task.from(i);
-                task.start_time_ms = get_time_ms();
+            let cur_state = task.inner_exclusive_access().state();
+            if cur_state == TaskState::UnInit {
+                task.from(app_id);
             }
-            if task.state() == TaskState::Ready {
+            let mut inner = task.inner_exclusive_access();
+            if inner.state() == TaskState::Ready {
                 self.next_task = app_id + 1;
-                task.set_state(TaskState::Running);
+                inner.set_state(TaskState::Running);
                 return Some(task);
             }
         }
         None
     }
+
+    pub fn add_task(name: &str) {}
 }

@@ -15,13 +15,19 @@ extern "C" {
     fn __restore(user_ctx: usize, user_token: usize) -> !;
 }
 
-pub fn restore(ctx: usize) -> ! {
-    log::debug!("try to get ctx addr by raw pointer, ctx_addr=0x{:x}", ctx);
-    let task_ctx = unsafe { &*(ctx as *const Task) };
-    let (user_trapctx, user_pt_token) = (task_ctx.get_user_ptr(), task_ctx.addr_space.token());
+pub fn restore(task_ctx: usize) -> ! {
     log::debug!(
-        "restore_from_trapctx, ctx={}, user_trapcontext_ptr=0x{:x}, user_pagetable_token=0x{:x}",
-        task_ctx.trap_ctx,
+        "restore, try to get task_ctx addr by raw pointer, ctx_addr=0x{:x}",
+        task_ctx
+    );
+    let task_ctx = unsafe { &*(task_ctx as *const Task) };
+    let mut inner = task_ctx.inner_exclusive_access();
+
+    let (user_trapctx, user_pt_token) = (inner.trap_ctx.get_ptr(), inner.addr_space.token());
+    log::debug!(
+        "restore_from_trapctx, task_id={}, trap_ctx={}, user_trapcontext_ptr=0x{:x}, user_pagetable_token=0x{:x}",
+        task_ctx.id,
+        inner.trap_ctx,
         user_trapctx,
         user_pt_token
     );

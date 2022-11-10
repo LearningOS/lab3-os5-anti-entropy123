@@ -17,7 +17,7 @@ pub struct TrapContext {
 }
 
 impl TrapContext {
-    pub fn app_init_context(user_stack: usize, entry_point: usize, kernel_stack: usize) -> Self {
+    pub fn new(user_stack: usize, entry_point: usize, kernel_stack: usize) -> Self {
         let mut ctx = TrapContext {
             x: [0; 32],
             sepc: entry_point,
@@ -30,6 +30,7 @@ impl TrapContext {
             kernel_sp: kernel_stack,
             trap_handler: trap_handler as usize,
         };
+        log::debug!("TrapContext::new, set ctx.x2=0x{:x}", user_stack);
         ctx.x[2] = user_stack;
         ctx
     }
@@ -40,6 +41,10 @@ impl TrapContext {
 
     pub fn set_reg_a(&mut self, n: usize, v: usize) {
         self.x[10 + n] = v
+    }
+
+    pub fn get_ptr(&mut self) -> usize {
+        self as *mut TrapContext as usize
     }
 }
 

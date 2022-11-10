@@ -25,22 +25,6 @@ pub fn get_num_app() -> usize {
     unsafe { (_num_app as usize as *const usize).read_volatile() }
 }
 
-pub fn get_app_data(app_id: usize) -> &'static [u8] {
-    extern "C" {
-        fn _num_app();
-    }
-    let num_app_ptr = _num_app as usize as *const usize;
-    let num_app = get_num_app();
-    let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
-    assert!(app_id < num_app);
-    unsafe {
-        core::slice::from_raw_parts(
-            app_start[app_id] as *const u8,
-            app_start[app_id + 1] - app_start[app_id],
-        )
-    }
-}
-
 pub fn get_app_elf(app_id: usize) -> &'static [u8] {
     extern "C" {
         fn _num_app();
@@ -85,7 +69,7 @@ pub fn get_app_data_by_name(name: &str) -> Option<&'static [u8]> {
     let num_app = get_num_app();
     (0..num_app)
         .find(|&i| APP_NAMES[i] == name)
-        .map(get_app_data)
+        .map(get_app_elf)
 }
 
 pub fn list_apps() {
@@ -98,4 +82,5 @@ pub fn list_apps() {
 
 pub fn setup_task_cx(app_id: usize) -> usize {
     usize::from(get_kernel_stack_phyaddr(app_id)) - core::mem::size_of::<Task>()
+    // unsafe { *(ptr as *mut Task) }
 }
