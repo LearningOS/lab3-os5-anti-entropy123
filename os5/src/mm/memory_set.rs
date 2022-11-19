@@ -1,12 +1,12 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 //!
 use super::{
-    address::SimpleRange, frame_alloc, FrameTracker, PTEFlags, PageTable, PageTableEntry, PhysAddr,
-    PhysPageNum, StepByOne, VPNRange, VirtAddr, VirtPageNum,
+    frame_alloc, FrameTracker, PTEFlags, PageTable, PageTableEntry, PhysAddr, PhysPageNum,
+    StepByOne, VPNRange, VirtAddr, VirtPageNum,
 };
-use crate::config::{
-    KERNEL_STACK_PAGE_NUM, KERNEL_STACK_SIZE, MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,
-    USER_STACK_SIZE,
+use crate::{
+    config::{MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
+    task::PidHandle,
 };
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use lazy_static::*;
@@ -33,6 +33,7 @@ lazy_static! {
 }
 
 /// memory set structure, controls virtual-memory space
+#[derive(Default)]
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
@@ -69,7 +70,7 @@ impl MemorySet {
     }
     pub fn unmap_area(
         &mut self,
-        task_id: usize,
+        task_pid: PidHandle,
         start_va: VirtAddr,
         end_va: VirtAddr,
     ) -> Result<(), ()> {
@@ -81,7 +82,7 @@ impl MemorySet {
                 break;
             }
         }
-        log::info!("task_{}, unmap_area select area {}", task_id, target);
+        log::info!("task_{}, unmap_area select area {}", task_pid, target);
         if target == usize::MAX {
             return Err(());
         }
@@ -171,7 +172,7 @@ impl MemorySet {
     }
     /// Include sections in elf and trampoline and TrapContext and user stack,
     /// also returns user_sp and entry point.
-    pub fn from_elf(elf_data: &[u8], kernel_stack_phyaddr: PhysAddr) -> (Self, usize, usize) {
+    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
         let mut memory_set = Self::new_bare();
         // map trampoline
         memory_set.map_trampoline();
@@ -222,23 +223,17 @@ impl MemorySet {
             ),
             None,
         );
-        // map TrapContext to Kernel Stack
-        // need to map pages[0..max-1]
-        let kernel_stack_low = usize::from(kernel_stack_phyaddr) - KERNEL_STACK_SIZE;
-        log::debug!(
-            "map task trapcontext, from va=0x{:x}-0x{:x} to pa=0x{:x}-0x{:x}",
-            TRAP_CONTEXT,
-            TRAP_CONTEXT + KERNEL_STACK_SIZE,
-            kernel_stack_low,
-            kernel_stack_low + KERNEL_STACK_SIZE,
+        // map TrapContext to new page frame.
+        memory_set.push(
+            MapArea::new(
+                TRAP_CONTEXT.into(),
+                TRAMPOLINE.into(),
+                MapType::Framed,
+                MapPermission::R | MapPermission::W,
+            ),
+            None,
         );
-        for i in 0..KERNEL_STACK_PAGE_NUM {
-            memory_set.page_table.map(
-                VirtPageNum::from(VirtAddr::from(TRAP_CONTEXT + i * PAGE_SIZE)),
-                PhysPageNum::from(PhysAddr::from(kernel_stack_low + i * PAGE_SIZE)),
-                PTEFlags::R | PTEFlags::W,
-            );
-        }
+
         let entrypoint = elf.header.pt2.entry_point();
         log::debug!("parse elf, entrypoint={}", entrypoint);
         assert!(

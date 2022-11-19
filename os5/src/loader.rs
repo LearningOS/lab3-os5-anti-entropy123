@@ -1,21 +1,75 @@
-use alloc::vec::Vec;
-use lazy_static::*;
+use core::cell::RefMut;
 
-use crate::{config::*, mm::PhysAddr, task::Task};
+use crate::{config::*, mm::PhysAddr, sync::UPSafeCell, task::PidHandle};
+use alloc::{collections::BTreeMap, format, vec::Vec};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref KS_MGR: UPSafeCell<KernelStackManager> = {
+        log::info!(
+            "need to construct KS_MGR, KernelStackManager struct size=0x{:x}",
+            core::mem::size_of::<KernelStackManager>()
+        );
+        unsafe { UPSafeCell::new(KernelStackManager::new()) }
+    };
+}
+
+// static mut KS_MGR: KernelStackManager = KernelStackManager::new();
+fn get_ks_mgr() -> RefMut<'static, KernelStackManager> {
+    KS_MGR.exclusive_access()
+}
 
 #[repr(align(4096))]
 #[derive(Copy, Clone)]
 struct KernelStack {
-    data: [u8; KERNEL_STACK_SIZE],
+    _data: [u8; KERNEL_STACK_SIZE],
 }
 
-static mut KERNEL_STACK: [KernelStack; MAX_APP_NUM] = [KernelStack {
-    data: [0; KERNEL_STACK_SIZE],
-}; MAX_APP_NUM];
+impl KernelStack {
+    fn bottom(&self) -> usize {
+        self as *const KernelStack as usize
+    }
+}
 
-pub fn get_kernel_stack_phyaddr(app_id: usize) -> PhysAddr {
-    // todo: maybe should use UPSafeCell?
-    PhysAddr::from(unsafe { KERNEL_STACK[app_id].data.as_ptr() as usize } + KERNEL_STACK_SIZE)
+struct KernelStackManager {
+    cursor: usize,
+    recycled: Vec<usize>,
+    record: BTreeMap<PidHandle, usize>, // pid => cursor
+    stacks: [KernelStack; MAX_APP_NUM],
+}
+
+impl KernelStackManager {
+    fn new() -> Self {
+        KernelStackManager {
+            cursor: 0,
+            recycled: Vec::new(),
+            record: BTreeMap::new(),
+            stacks: [KernelStack {
+                _data: [0; KERNEL_STACK_SIZE],
+            }; MAX_APP_NUM],
+        }
+    }
+
+    fn alloc_kernel_stack(&mut self, pid: PidHandle) -> (usize, usize) {
+        let target = self.recycled.pop().unwrap_or_else(|| {
+            let v = self.cursor;
+            self.cursor += 1;
+            v
+        });
+        self.record.insert(pid, target);
+        let bottom = self.stacks[target].bottom();
+        (bottom, bottom + KERNEL_STACK_SIZE)
+    }
+
+    fn lookup_kernel_stack(&mut self, pid: &PidHandle) -> (usize, usize) {
+        let curosr = self
+            .record
+            .get(pid)
+            .expect(&format!("lookup kernel stack by wrong pid? pid={}", pid.0));
+
+        let bottom = self.stacks[*curosr].bottom();
+        (bottom, bottom + KERNEL_STACK_SIZE)
+    }
 }
 
 pub fn get_num_app() -> usize {
@@ -25,14 +79,18 @@ pub fn get_num_app() -> usize {
     unsafe { (_num_app as usize as *const usize).read_volatile() }
 }
 
-pub fn get_app_elf(app_id: usize) -> &'static [u8] {
+fn get_appid_by_name(name: &str) -> Option<usize> {
+    (0..get_num_app()).find(|&i| APP_NAMES[i] == name)
+}
+
+pub fn get_app_elf(name: &str) -> &'static [u8] {
     extern "C" {
         fn _num_app();
     }
     let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
     let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
-    assert!(app_id < num_app);
+    let app_id = get_appid_by_name(name).expect(&format!("wrong app name? name={}", name));
     unsafe {
         core::slice::from_raw_parts(
             app_start[app_id] as *const u8,
@@ -65,13 +123,6 @@ lazy_static! {
     };
 }
 
-pub fn get_app_data_by_name(name: &str) -> Option<&'static [u8]> {
-    let num_app = get_num_app();
-    (0..num_app)
-        .find(|&i| APP_NAMES[i] == name)
-        .map(get_app_elf)
-}
-
 pub fn list_apps() {
     println!("/**** APPS ****");
     for app in APP_NAMES.iter() {
@@ -80,7 +131,18 @@ pub fn list_apps() {
     println!("**************/");
 }
 
-pub fn setup_task_cx(app_id: usize) -> usize {
-    usize::from(get_kernel_stack_phyaddr(app_id)) - core::mem::size_of::<Task>()
-    // unsafe { *(ptr as *mut Task) }
+pub fn alloc_kernel_stack(pid: PidHandle) -> (usize, usize) {
+    // unsafe { KS_MGR.alloc_kernel_stack(pid) }
+    get_ks_mgr().alloc_kernel_stack(pid)
+}
+
+pub fn get_kernel_stack_top(pid: &PidHandle) -> PhysAddr {
+    // let (_, stack_top) = unsafe { KS_MGR.lookup_kernel_stack(pid) };
+    let (_, stack_top) = get_ks_mgr().lookup_kernel_stack(pid);
+    PhysAddr::from(stack_top)
+}
+
+pub fn lookup_kernel_stack(pid: &PidHandle) -> (usize, usize) {
+    // unsafe { KS_MGR.lookup_kernel_stack(pid) }
+    get_ks_mgr().lookup_kernel_stack(pid)
 }

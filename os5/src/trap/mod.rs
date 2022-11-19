@@ -1,6 +1,7 @@
 mod context;
 mod handler;
 
+use alloc::sync::Arc;
 use riscv::register::sie;
 use riscv::register::{stvec, utvec::TrapMode};
 
@@ -15,19 +16,17 @@ extern "C" {
     fn __restore(user_ctx: usize, user_token: usize) -> !;
 }
 
-pub fn restore(task_ctx: usize) -> ! {
-    log::debug!(
-        "restore, try to get task_ctx addr by raw pointer, ctx_addr=0x{:x}",
-        task_ctx
-    );
-    let task_ctx = unsafe { &*(task_ctx as *const Task) };
+pub fn restore(task_ctx: Arc<Task>) -> ! {
     let (user_trapctx, user_pt_token) = {
         let mut inner = task_ctx.inner_exclusive_access();
-        let vals = (inner.trap_ctx.get_user_ptr(), inner.addr_space.token());
+        let vals = (
+            inner.trap_context().get_user_ptr(),
+            inner.addr_space.token(),
+        );
         log::trace!(
-            "restore_from_trapctx, task_id={}, trap_ctx={}, user_trapcontext_ptr=0x{:x}, user_pagetable_token=0x{:x}",
-            task_ctx.id,
-            inner.trap_ctx,
+            "restore_from_trapctx, task_pid={}, trap_ctx={}, user_trapcontext_ptr=0x{:x}, user_pagetable_token=0x{:x}",
+            task_ctx.pid,
+            inner.trap_context(),
             vals.0,
             vals.1
         );

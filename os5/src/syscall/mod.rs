@@ -1,4 +1,4 @@
-use alloc::{format, string::ToString};
+use alloc::{format, string::ToString, sync::Arc};
 
 use crate::{
     config::MAX_SYSCALL_NUM,
@@ -17,6 +17,7 @@ enum Syscall {
     TaskInfo,
     Mmap,
     Munmap,
+    Fork,
 }
 impl Syscall {
     fn from(n: usize) -> Result<Syscall, ()> {
@@ -26,6 +27,7 @@ impl Syscall {
             124 => Self::Yield,        // 0x7c
             169 => Self::GetTimeOfDay, // 0xa9
             215 => Self::Munmap,       // 0xd7
+            220 => Self::Fork,         // 0xdc
             222 => Self::Mmap,         // 0xde
             410 => Self::TaskInfo,     // 0x19a
             _ => {
@@ -39,35 +41,38 @@ impl Syscall {
 type SyscallResult = Result<isize, ()>;
 
 impl Syscall {
-    fn handle(&self, task: &mut Task, arg1: usize, arg2: usize, arg3: usize) {
+    fn handle(&self, task: Arc<Task>, arg1: usize, arg2: usize, arg3: usize) {
         let ret: SyscallResult = match self {
-            Syscall::Write => sys_write(task, arg1, arg2, arg3),
+            Syscall::Write => sys_write(Arc::clone(&task), arg1, arg2, arg3),
             Syscall::Exit => sys_exit(task),
-            Syscall::GetTimeOfDay => sys_gettimeofday(task, arg1, arg2),
+            Syscall::GetTimeOfDay => sys_gettimeofday(Arc::clone(&task), arg1, arg2),
             Syscall::Yield => sys_yield(task),
-            Syscall::TaskInfo => sys_taskinfo(&task, arg1),
-            Syscall::Mmap => sys_mmap(task, arg1, arg2, arg3),
-            Syscall::Munmap => sys_unmmap(task, arg1, arg2),
+            Syscall::TaskInfo => sys_taskinfo(Arc::clone(&task), arg1),
+            Syscall::Mmap => sys_mmap(Arc::clone(&task), arg1, arg2, arg3),
+            Syscall::Munmap => sys_unmmap(Arc::clone(&task), arg1, arg2),
+            Syscall::Fork => sys_fork(Arc::clone(&task)),
             _ => todo!("unsupported syscall handle function, syscall={:?}", self),
         };
         let ret = ret.unwrap_or(-1);
         let a0 = {
-            let mut inner = task.inner_exclusive_access();
-            inner.trap_ctx.set_reg_a(0, ret as usize);
-            inner.trap_ctx.reg_a(0)
+            let inner = task.inner_exclusive_access();
+            let trap_ctx = inner.trap_context();
+            trap_ctx.set_reg_a(0, ret as usize);
+            trap_ctx.reg_a(0)
         };
         log::info!(
             "task_{} syscall ret={:x}, task.trap_ctx.x[10]={:x}",
-            task.id,
+            task.pid,
             ret,
             a0
         );
     }
 }
 
-pub fn syscall_handler(ctx: &mut Task) {
+pub fn syscall_handler(ctx: Arc<Task>) {
     let (syscall_num, a0, a1, a2) = {
-        let trap_ctx = &mut ctx.inner_exclusive_access().trap_ctx;
+        let inner = ctx.inner_exclusive_access();
+        let trap_ctx = inner.trap_context();
         (
             trap_ctx.reg_a(7),
             trap_ctx.reg_a(0),
@@ -78,11 +83,12 @@ pub fn syscall_handler(ctx: &mut Task) {
     {
         ctx.inner_exclusive_access().syscall_times[syscall_num] += 1;
     }
-    let syscall = Syscall::from(syscall_num).unwrap_or_else(|_| sys_exit(ctx));
+    let syscall = Syscall::from(syscall_num).unwrap_or_else(|_| sys_exit(Arc::clone(&ctx)));
 
     log::info!(
-        "task_{} syscall_handler, num={}, name={:?}",
-        ctx.id,
+        "task_{}({}) syscall_handler, num={}, name={:?}",
+        ctx.pid,
+        ctx.name,
         syscall_num,
         syscall
     );
@@ -90,7 +96,7 @@ pub fn syscall_handler(ctx: &mut Task) {
     syscall.handle(ctx, a0, a1, a2)
 }
 
-fn sys_write(task: &Task, fd: usize, buf: usize, len: usize) -> SyscallResult {
+fn sys_write(task: Arc<Task>, fd: usize, buf: usize, len: usize) -> SyscallResult {
     let buf = task
         .inner_exclusive_access()
         .translate(buf)
@@ -109,7 +115,7 @@ fn sys_write(task: &Task, fd: usize, buf: usize, len: usize) -> SyscallResult {
     Ok(len as isize)
 }
 
-fn sys_gettimeofday(task: &Task, timeval_ptr: usize, _tz: usize) -> SyscallResult {
+fn sys_gettimeofday(task: Arc<Task>, timeval_ptr: usize, _tz: usize) -> SyscallResult {
     let inner = task.inner_exclusive_access();
     let timeval_ptr = inner.translate(timeval_ptr).expect(&format!(
         "sys_gettimeofday, receive bad timeval_ptr addr? buf=0x{:x}",
@@ -121,14 +127,14 @@ fn sys_gettimeofday(task: &Task, timeval_ptr: usize, _tz: usize) -> SyscallResul
     Ok(0)
 }
 
-fn sys_yield(task: &mut Task) -> ! {
+fn sys_yield(task: Arc<Task>) -> ! {
     {
         task.inner_exclusive_access().set_state(TaskState::Ready)
     }
     run_next_task();
 }
 
-pub fn sys_exit(task: &mut Task) -> ! {
+pub fn sys_exit(task: Arc<Task>) -> ! {
     {
         task.inner_exclusive_access().set_state(TaskState::Exited)
     }
@@ -142,13 +148,13 @@ pub struct TaskInfo {
     pub exec_time: usize,
 }
 
-fn sys_taskinfo(task: &Task, user_info: usize) -> SyscallResult {
+fn sys_taskinfo(task: Arc<Task>, user_info: usize) -> SyscallResult {
     let (user_info, syscall_times) = {
         let inner = task.inner_exclusive_access();
         (
             inner.translate(user_info).expect(&format!(
-                "task_{} sys_taskinfo, receive bad user_info addr? buf=0x{:x}",
-                task.id, user_info
+                "task_{}({}) sys_taskinfo, receive bad user_info addr? buf=0x{:x}",
+                task.pid, task.name, user_info
             )),
             inner.syscall_times,
         )
@@ -160,17 +166,19 @@ fn sys_taskinfo(task: &Task, user_info: usize) -> SyscallResult {
         exec_time: get_time_ms() - task.start_time_ms,
     };
     log::debug!(
-        "task_{} sys_taskinfo, copyout user_info={:?}",
-        task.id,
+        "task_{}({}) sys_taskinfo, copyout user_info={:?}",
+        task.pid,
+        task.name,
         taskinfo
     );
     Ok(0)
 }
 
-fn sys_mmap(task: &mut Task, start: usize, len: usize, port: usize) -> SyscallResult {
+fn sys_mmap(task: Arc<Task>, start: usize, len: usize, port: usize) -> SyscallResult {
     log::info!(
-        "task_{} sys_mmap, receive args start=0x{:x}, end=0x{:x}, len=0x{:x}, port=0x{:x}",
-        task.id,
+        "task_{}({}) sys_mmap, receive args start=0x{:x}, end=0x{:x}, len=0x{:x}, port=0x{:x}",
+        task.pid,
+        task.name,
         start,
         start + len,
         len,
@@ -178,8 +186,9 @@ fn sys_mmap(task: &mut Task, start: usize, len: usize, port: usize) -> SyscallRe
     );
     if port & !0x7 != 0 {
         log::info!(
-            "task_{} sys_mmap failed, receive bad port? port=0x{:x}",
-            task.id,
+            "task_{}({}) sys_mmap failed, receive bad port? port=0x{:x}",
+            task.pid,
+            task.name,
             port
         );
         return Err(());
@@ -193,8 +202,9 @@ fn sys_mmap(task: &mut Task, start: usize, len: usize, port: usize) -> SyscallRe
             1 => MapPermission::R,
             _ => {
                 log::info!(
-                    "task_{} sys_mmap failed, receive meaningless port? port=0x{:x}",
-                    task.id,
+                    "task_{}({}) sys_mmap failed, receive meaningless port? port=0x{:x}",
+                    task.pid,
+                    task.name,
                     port
                 );
                 return Err(());
@@ -212,10 +222,11 @@ fn sys_mmap(task: &mut Task, start: usize, len: usize, port: usize) -> SyscallRe
         .map(|_| 0)
 }
 
-fn sys_unmmap(task: &mut Task, start: usize, len: usize) -> SyscallResult {
+fn sys_unmmap(task: Arc<Task>, start: usize, len: usize) -> SyscallResult {
     log::info!(
-        "task_{} sys_unmmap, receive args start=0x{:x}, len=0x{:x}",
-        task.id,
+        "task_{}({}) sys_unmmap, receive args start=0x{:x}, len=0x{:x}",
+        task.pid,
+        task.name,
         start,
         len
     );
@@ -226,6 +237,10 @@ fn sys_unmmap(task: &mut Task, start: usize, len: usize) -> SyscallResult {
     }
     task.inner_exclusive_access()
         .addr_space
-        .unmap_area(task.id, start, end)
+        .unmap_area(task.pid.clone(), start, end)
         .map(|_| 0)
+}
+
+fn sys_fork(_task: Arc<Task>) -> SyscallResult {
+    todo!()
 }

@@ -1,8 +1,5 @@
-use crate::{
-    config::*,
-    loader::{get_num_app, setup_task_cx},
-    task::{Task, TaskState},
-};
+use crate::task::{Task, TaskState};
+use alloc::{collections::VecDeque, sync::Arc};
 use lazy_static::lazy_static;
 use spin::Mutex;
 
@@ -12,43 +9,27 @@ lazy_static! {
 
 pub struct TaskManager {
     pub next_task: usize,
-    task_list: [Option<usize>; MAX_APP_NUM],
+    task_list: VecDeque<Arc<Task>>,
 }
 
 impl TaskManager {
     fn new() -> Self {
-        let mut task_list: [Option<usize>; MAX_APP_NUM] = [None; MAX_APP_NUM];
-        for i in 0..get_num_app() {
-            let task_ptr = setup_task_cx(i);
-            task_list[i] = Some(task_ptr);
-        }
         Self {
-            task_list,
+            task_list: VecDeque::new(),
             next_task: 0,
         }
     }
 
-    pub fn find_next_ready_task(&mut self) -> Option<&Task> {
-        let current = self.next_task;
-        for i in current..(current + MAX_APP_NUM) {
-            let app_id = i % 19;
-            let task = match self.task_list[app_id].map(|ptr| unsafe { &mut *(ptr as *mut Task) }) {
-                None => continue,
-                Some(task) => task,
-            };
-            let cur_state = { task.inner_exclusive_access().state() };
-            if cur_state == TaskState::UnInit {
-                task.from(app_id);
-            }
-            let cur_state = { task.inner_exclusive_access().state() };
-            if cur_state == TaskState::Ready {
-                task.inner_exclusive_access().set_state(TaskState::Running);
-                self.next_task = app_id + 1;
-                return Some(task);
-            }
-        }
-        None
+    pub fn find_next_ready_task(&mut self) -> Option<Arc<Task>> {
+        let task = match self.task_list.pop_front() {
+            None => return None,
+            Some(task) => task,
+        };
+        assert!(task.inner_exclusive_access().state == TaskState::Ready);
+        Some(task)
     }
 
-    pub fn add_task(name: &str) {}
+    pub fn add_task(&mut self, task: Arc<Task>) {
+        self.task_list.push_back(task);
+    }
 }

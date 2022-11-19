@@ -2,7 +2,10 @@ use core::fmt::Display;
 
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
-use crate::{mm::{KERNEL_SPACE, VirtAddr}, config::{TRAMPOLINE, PAGE_SIZE}};
+use crate::{
+    config::{PAGE_SIZE, TRAMPOLINE},
+    mm::{VirtAddr, KERNEL_SPACE},
+};
 
 use super::handler::trap_handler;
 
@@ -17,22 +20,19 @@ pub struct TrapContext {
 }
 
 impl TrapContext {
-    pub fn new(user_stack: usize, entry_point: usize, kernel_stack: usize) -> Self {
-        let mut ctx = TrapContext {
-            x: [0; 32],
-            sepc: entry_point,
-            sstatus: {
-                let mut sstatus = sstatus::read();
-                sstatus.set_spp(SPP::User);
-                sstatus
-            },
-            kernel_satp: KERNEL_SPACE.lock().token(),
-            kernel_sp: kernel_stack,
-            trap_handler: trap_handler as usize,
+    pub fn init(&mut self, user_stack: usize, entry_point: usize, kernel_stack: usize) {
+        self.sepc = entry_point;
+        self.sstatus = {
+            let mut sstatus = sstatus::read();
+            sstatus.set_spp(SPP::User);
+            sstatus
         };
+        self.kernel_satp = KERNEL_SPACE.lock().token();
+        self.kernel_sp = kernel_stack;
+        self.trap_handler = trap_handler as usize;
+
         log::debug!("TrapContext::new, set ctx.x2=0x{:x}", user_stack);
-        ctx.x[2] = user_stack;
-        ctx
+        self.x[2] = user_stack
     }
 
     pub fn reg_a(&self, n: usize) -> usize {

@@ -2,10 +2,7 @@
 
 use super::PageTableEntry;
 use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS};
-use core::{
-    fmt::{self, Debug, Formatter},
-    ops::Sub,
-};
+use core::fmt::{self, Debug, Formatter};
 
 /// physical address
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -16,7 +13,7 @@ pub struct PhysAddr(pub usize);
 pub struct VirtAddr(pub usize);
 
 /// physical page number
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Default)]
 pub struct PhysPageNum(pub usize);
 
 /// virtual page number
