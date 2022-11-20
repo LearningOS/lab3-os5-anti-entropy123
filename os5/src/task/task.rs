@@ -1,6 +1,6 @@
 use core::cell::RefMut;
 
-use alloc::{borrow::ToOwned, string::String, sync::Arc};
+use alloc::{borrow::ToOwned, string::String, sync::Arc, vec::Vec};
 
 use crate::{
     config::*,
@@ -11,7 +11,7 @@ use crate::{
     trap::TrapContext,
 };
 
-use super::{alloc_pid, PidHandle};
+use super::{add_task, alloc_pid, PidHandle};
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum TaskState {
@@ -33,6 +33,8 @@ pub struct TaskInner {
     pub state: TaskState,
     pub syscall_times: [u32; MAX_SYSCALL_NUM],
     pub addr_space: MemorySet,
+    pub children: Vec<Arc<Task>>,
+    pub exit_code: i32,
 }
 
 impl Default for TaskInner {
@@ -42,6 +44,8 @@ impl Default for TaskInner {
             state: Default::default(),
             syscall_times: [0; MAX_SYSCALL_NUM],
             addr_space: MemorySet::default(),
+            children: Vec::new(),
+            exit_code: 0,
         }
     }
 }
@@ -112,4 +116,52 @@ impl Task {
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskInner> {
         self.inner.exclusive_access()
     }
+}
+
+pub fn fork_task(parent: &Arc<Task>) -> Arc<Task> {
+    let new_pid = alloc_pid();
+
+    let p_inner = parent.inner_exclusive_access();
+
+    // init new memory_set
+    let (new_ms, trap_ctx_ppn) = {
+        let ms = MemorySet::from_existed_user(&p_inner.addr_space);
+        let trap_ctx_ppn = ms
+            .translate(VirtAddr::from(TRAP_CONTEXT).into())
+            .unwrap()
+            .ppn();
+        (ms, trap_ctx_ppn)
+    };
+    // init child task
+    let child_task = Task {
+        pid: new_pid.clone(),
+        name: parent.name.clone(),
+        start_time_ms: get_time_ms(),
+        inner: unsafe {
+            UPSafeCell::new(TaskInner {
+                trap_ctx_ppn,
+                state: TaskState::Ready,
+                syscall_times: p_inner.syscall_times.clone(),
+                addr_space: new_ms,
+                children: Vec::new(),
+                exit_code: 0,
+            })
+        },
+    };
+    // init new trapctx
+    {
+        let child_inner = child_task.inner_exclusive_access();
+        let (_, kernel_stack_top) = alloc_kernel_stack(new_pid.clone());
+
+        trap_ctx_ppn
+            .get_bytes_array()
+            .copy_from_slice(p_inner.trap_ctx_ppn.get_bytes_array());
+
+        let child_trapctx = child_inner.trap_context();
+        child_trapctx.set_reg_a(10, 0); // fork return 0 to child.
+        child_trapctx.kernel_sp = kernel_stack_top;
+    }
+    let child_task = Arc::from(child_task);
+    add_task(Arc::clone(&child_task));
+    child_task
 }

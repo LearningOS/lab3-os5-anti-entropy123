@@ -39,15 +39,15 @@ pub fn trap_handler() -> ! {
         }
         Trap::Exception(Exception::LoadPageFault) | Trap::Exception(Exception::StorePageFault) => {
             log::info!("page fault, try to access virtual address 0x{:x}", stval);
-            sys_exit(task);
+            sys_exit(task, 1);
         }
         Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) => {
             log::error!("memory access fault, core dump");
-            sys_exit(task);
+            sys_exit(task, 1);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             log::error!("illegal instruction, core dump");
-            sys_exit(task);
+            sys_exit(task, 1);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             log::info!("Timer interrupt.");

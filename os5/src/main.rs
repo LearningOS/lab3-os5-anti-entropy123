@@ -53,7 +53,7 @@ pub fn rust_main() -> ! {
     timer::set_next_trigger();
     loader::list_apps();
     // task::add_initproc();
-    // info!("after initproc!");
+    info!("after initproc!");
     batch_add_app();
     task::run_next_task()
 }
@@ -66,4 +66,5 @@ pub fn batch_add_app() {
     task::add_task(Task::new("ch3_taskinfo"));
     task::add_task(Task::new("ch4_mmap3"));
     task::add_task(Task::new("ch4_unmap2"));
+    task::add_task(Task::new("ch5b_exit"));
 }
