@@ -54,7 +54,8 @@ pub fn rust_main() -> ! {
     loader::list_apps();
     // task::add_initproc();
     info!("after initproc!");
-    batch_add_app();
+    task::add_task(Task::new("ch5_getpid"));
+    // batch_add_app();
     task::run_next_task()
 }
 
@@ -67,4 +68,7 @@ pub fn batch_add_app() {
     task::add_task(Task::new("ch4_mmap3"));
     task::add_task(Task::new("ch4_unmap2"));
     task::add_task(Task::new("ch5b_exit"));
+    task::add_task(Task::new("ch5b_forktest_simple"));
+    task::add_task(Task::new("ch5b_forktest"));
+    task::add_task(Task::new("ch5b_forktree"));
 }

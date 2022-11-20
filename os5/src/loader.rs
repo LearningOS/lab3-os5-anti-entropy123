@@ -1,76 +1,7 @@
-use core::cell::RefMut;
 
-use crate::{config::*, mm::PhysAddr, sync::UPSafeCell, task::PidHandle};
-use alloc::{collections::BTreeMap, format, vec::Vec};
+use alloc::{format, vec::Vec};
 use lazy_static::lazy_static;
 
-lazy_static! {
-    static ref KS_MGR: UPSafeCell<KernelStackManager> = {
-        log::info!(
-            "need to construct KS_MGR, KernelStackManager struct size=0x{:x}",
-            core::mem::size_of::<KernelStackManager>()
-        );
-        unsafe { UPSafeCell::new(KernelStackManager::new()) }
-    };
-}
-
-// static mut KS_MGR: KernelStackManager = KernelStackManager::new();
-fn get_ks_mgr() -> RefMut<'static, KernelStackManager> {
-    KS_MGR.exclusive_access()
-}
-
-#[repr(align(4096))]
-#[derive(Copy, Clone)]
-struct KernelStack {
-    _data: [u8; KERNEL_STACK_SIZE],
-}
-
-impl KernelStack {
-    fn bottom(&self) -> usize {
-        self as *const KernelStack as usize
-    }
-}
-
-struct KernelStackManager {
-    cursor: usize,
-    recycled: Vec<usize>,
-    record: BTreeMap<PidHandle, usize>, // pid => cursor
-    stacks: [KernelStack; MAX_APP_NUM],
-}
-
-impl KernelStackManager {
-    fn new() -> Self {
-        KernelStackManager {
-            cursor: 0,
-            recycled: Vec::new(),
-            record: BTreeMap::new(),
-            stacks: [KernelStack {
-                _data: [0; KERNEL_STACK_SIZE],
-            }; MAX_APP_NUM],
-        }
-    }
-
-    fn alloc_kernel_stack(&mut self, pid: PidHandle) -> (usize, usize) {
-        let target = self.recycled.pop().unwrap_or_else(|| {
-            let v = self.cursor;
-            self.cursor += 1;
-            v
-        });
-        self.record.insert(pid, target);
-        let bottom = self.stacks[target].bottom();
-        (bottom, bottom + KERNEL_STACK_SIZE)
-    }
-
-    fn lookup_kernel_stack(&mut self, pid: &PidHandle) -> (usize, usize) {
-        let curosr = self
-            .record
-            .get(pid)
-            .expect(&format!("lookup kernel stack by wrong pid? pid={}", pid.0));
-
-        let bottom = self.stacks[*curosr].bottom();
-        (bottom, bottom + KERNEL_STACK_SIZE)
-    }
-}
 
 pub fn get_num_app() -> usize {
     extern "C" {
@@ -131,18 +62,18 @@ pub fn list_apps() {
     println!("**************/");
 }
 
-pub fn alloc_kernel_stack(pid: PidHandle) -> (usize, usize) {
-    // unsafe { KS_MGR.alloc_kernel_stack(pid) }
-    get_ks_mgr().alloc_kernel_stack(pid)
-}
+// pub fn alloc_kernel_stack(pid: PidHandle) -> (usize, usize) {
+//     // unsafe { KS_MGR.alloc_kernel_stack(pid) }
+//     get_ks_mgr().alloc_kernel_stack(pid)
+// }
 
-pub fn get_kernel_stack_top(pid: &PidHandle) -> PhysAddr {
-    // let (_, stack_top) = unsafe { KS_MGR.lookup_kernel_stack(pid) };
-    let (_, stack_top) = get_ks_mgr().lookup_kernel_stack(pid);
-    PhysAddr::from(stack_top)
-}
+// pub fn get_kernel_stack_top(pid: &PidHandle) -> PhysAddr {
+//     // let (_, stack_top) = unsafe { KS_MGR.lookup_kernel_stack(pid) };
+//     let (_, stack_top) = get_ks_mgr().lookup_kernel_stack(pid);
+//     PhysAddr::from(stack_top)
+// }
 
-pub fn lookup_kernel_stack(pid: &PidHandle) -> (usize, usize) {
-    // unsafe { KS_MGR.lookup_kernel_stack(pid) }
-    get_ks_mgr().lookup_kernel_stack(pid)
-}
+// pub fn lookup_kernel_stack(pid: &PidHandle) -> (usize, usize) {
+//     // unsafe { KS_MGR.lookup_kernel_stack(pid) }
+//     get_ks_mgr().lookup_kernel_stack(pid)
+// }

@@ -23,7 +23,8 @@ enum Syscall {
     Mmap,
     Munmap,
     Fork,
-    WAITPID,
+    WaitPid,
+    GetPid,
 }
 impl Syscall {
     fn from(n: usize) -> Result<Syscall, ()> {
@@ -32,10 +33,11 @@ impl Syscall {
             93 => Self::Exit,          // 0x5d
             124 => Self::Yield,        // 0x7c
             169 => Self::GetTimeOfDay, // 0xa9
+            172 => Self::GetPid,       // 0xac
             215 => Self::Munmap,       // 0xd7
             220 => Self::Fork,         // 0xdc
             222 => Self::Mmap,         // 0xde
-            260 => Self::WAITPID,      // 0x104
+            260 => Self::WaitPid,      // 0x104
             410 => Self::TaskInfo,     // 0x19a
             _ => {
                 log::warn!("unsupported syscall: {}", n.to_string());
@@ -58,7 +60,8 @@ impl Syscall {
             Syscall::Mmap => sys_mmap(Arc::clone(&task), arg1, arg2, arg3),
             Syscall::Munmap => sys_unmmap(Arc::clone(&task), arg1, arg2),
             Syscall::Fork => sys_fork(Arc::clone(&task)),
-            Syscall::WAITPID => sys_waitpid(Arc::clone(&task), arg1 as isize, arg2),
+            Syscall::WaitPid => sys_waitpid(Arc::clone(&task), arg1 as isize, arg2),
+            Syscall::GetPid => sys_getpid(Arc::clone(&task)),
             // _ => todo!("unsupported syscall handle function, syscall={:?}", self),
         };
         let ret = ret.unwrap_or(-1);
@@ -285,4 +288,8 @@ fn sys_waitpid(task: Arc<Task>, target_pid: isize, exit_code: usize) -> SyscallR
     };
 
     Ok(target_children_pid.0 as isize)
+}
+
+fn sys_getpid(task: Arc<Task>) -> SyscallResult {
+    Ok(task.pid.0 as isize)
 }

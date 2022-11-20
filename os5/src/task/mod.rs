@@ -1,3 +1,4 @@
+mod kernel_stack;
 mod manager;
 mod pid;
 mod processor;

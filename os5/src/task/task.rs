@@ -4,14 +4,18 @@ use alloc::{borrow::ToOwned, string::String, sync::Arc, vec::Vec};
 
 use crate::{
     config::*,
-    loader::{alloc_kernel_stack, get_app_elf},
+    loader::get_app_elf,
     mm::{MemorySet, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum},
     sync::UPSafeCell,
     timer::get_time_ms,
     trap::TrapContext,
 };
 
-use super::{add_task, alloc_pid, PidHandle};
+use super::{
+    add_task, alloc_pid,
+    kernel_stack::{alloc_kernel_stack, KernelStack},
+    PidHandle,
+};
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum TaskState {
@@ -72,6 +76,7 @@ pub struct Task {
     pub pid: PidHandle,
     pub name: String,
     pub start_time_ms: usize,
+    pub kernel_stack: KernelStack,
     inner: UPSafeCell<TaskInner>,
 }
 
@@ -79,9 +84,10 @@ impl Task {
     pub fn new(name: &str) -> Arc<Task> {
         let new_pid = alloc_pid();
         let mut task = Task {
-            pid: new_pid,
+            pid: new_pid.clone(),
             name: name.to_owned(),
             start_time_ms: get_time_ms(),
+            kernel_stack: alloc_kernel_stack(new_pid),
             inner: unsafe { UPSafeCell::new(TaskInner::default()) },
         };
         task.init(name);
@@ -89,7 +95,7 @@ impl Task {
     }
 
     fn init(&mut self, name: &str) {
-        let (_, kernel_stack_top) = alloc_kernel_stack(self.pid.clone());
+        let kernel_stack_top = self.kernel_stack.position().1;
         let elf_data = get_app_elf(name);
         let (ms, user_stack, entrypoint) = MemorySet::from_elf(elf_data);
 
@@ -137,6 +143,7 @@ pub fn fork_task(parent: &Arc<Task>) -> Arc<Task> {
         pid: new_pid.clone(),
         name: parent.name.clone(),
         start_time_ms: get_time_ms(),
+        kernel_stack: alloc_kernel_stack(new_pid.clone()),
         inner: unsafe {
             UPSafeCell::new(TaskInner {
                 trap_ctx_ppn,
@@ -151,7 +158,7 @@ pub fn fork_task(parent: &Arc<Task>) -> Arc<Task> {
     // init new trapctx
     {
         let child_inner = child_task.inner_exclusive_access();
-        let (_, kernel_stack_top) = alloc_kernel_stack(new_pid.clone());
+        let kernel_stack_top = child_task.kernel_stack.position().1;
 
         trap_ctx_ppn
             .get_bytes_array()
