@@ -16,7 +16,7 @@ impl KernelStack {
 
 impl Drop for KernelStack {
     fn drop(&mut self) {
-        log::debug!("drop kernel_stack, pid={}", self.pid);
+        log::info!("drop kernel_stack, pid={}", self.pid);
         let (kernel_stack_bottom, _) = self.position();
         let kernel_stack_bottom_va: VirtAddr = kernel_stack_bottom.into();
         KERNEL_SPACE

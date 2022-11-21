@@ -72,6 +72,7 @@ impl PageTable {
         }
     }
     /// Temporarily used to get arguments from user space.
+    #[allow(dead_code)]
     pub fn from_token(satp: usize) -> Self {
         Self {
             root_ppn: PhysPageNum::from(satp & ((1usize << 44) - 1)),
@@ -135,6 +136,7 @@ impl PageTable {
 }
 
 /// translate a pointer to a mutable u8 Vec through page table
+#[allow(dead_code)]
 pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
     let page_table = PageTable::from_token(token);
     let mut start = ptr as usize;

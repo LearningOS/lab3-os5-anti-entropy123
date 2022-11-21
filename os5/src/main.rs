@@ -3,6 +3,11 @@
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
 
+use alloc::{sync::Arc, vec::Vec};
+use lazy_static::lazy_static;
+use sync::UPSafeCell;
+use task::add_task;
+
 use crate::task::Task;
 
 #[macro_use]
@@ -53,22 +58,39 @@ pub fn rust_main() -> ! {
     timer::set_next_trigger();
     loader::list_apps();
     // task::add_initproc();
-    info!("after initproc!");
-    task::add_task(Task::new("ch5_getpid"));
-    // batch_add_app();
+    // info!("after initproc!");
+    batch_add_app();
+    // task::add_task(Task::new("ch3_taskinfo"));
     task::run_next_task()
 }
 
+lazy_static! {
+    pub static ref BATCH_PROCESSING_TASK: UPSafeCell<Vec<Arc<Task>>> =
+        unsafe { UPSafeCell::new(Vec::new()) };
+}
+
 pub fn batch_add_app() {
-    task::add_task(Task::new("ch2b_bad_address"));
-    task::add_task(Task::new("ch2b_hello_world"));
-    task::add_task(Task::new("ch2b_power_7"));
-    task::add_task(Task::new("ch3b_sleep1"));
-    task::add_task(Task::new("ch3_taskinfo"));
-    task::add_task(Task::new("ch4_mmap3"));
-    task::add_task(Task::new("ch4_unmap2"));
-    task::add_task(Task::new("ch5b_exit"));
-    task::add_task(Task::new("ch5b_forktest_simple"));
-    task::add_task(Task::new("ch5b_forktest"));
-    task::add_task(Task::new("ch5b_forktree"));
+    /*由于这种产生进程的方式会让它们没有父进程
+     * 在 exit 后, 换栈之前, 提前释放进程控制块,
+     * 进而释放内核栈, 导致缺页错误. 所以要在这里
+     * 留一个引用计数
+     */
+    let mut batch_processing_task = BATCH_PROCESSING_TASK.exclusive_access();
+    batch_processing_task.push(Task::new("ch2b_bad_address"));
+    batch_processing_task.push(Task::new("ch2b_hello_world"));
+    batch_processing_task.push(Task::new("ch2b_power_7"));
+    batch_processing_task.push(Task::new("ch3b_sleep1"));
+    batch_processing_task.push(Task::new("ch3_taskinfo"));
+    batch_processing_task.push(Task::new("ch4_mmap3"));
+    batch_processing_task.push(Task::new("ch4_unmap2"));
+    batch_processing_task.push(Task::new("ch5b_exit"));
+    batch_processing_task.push(Task::new("ch5b_forktest_simple"));
+    batch_processing_task.push(Task::new("ch5b_forktest"));
+    batch_processing_task.push(Task::new("ch5_getpid"));
+    batch_processing_task.push(Task::new("ch5b_forktree"));
+    batch_processing_task.push(Task::new("ch5b_forktest2"));
+
+    for task in batch_processing_task.iter() {
+        add_task(Arc::clone(task))
+    }
 }

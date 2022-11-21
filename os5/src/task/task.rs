@@ -1,6 +1,11 @@
-use core::cell::RefMut;
+use core::{cell::RefMut, fmt::Display};
 
-use alloc::{borrow::ToOwned, string::String, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    string::String,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 
 use crate::{
     config::*,
@@ -122,44 +127,50 @@ impl Task {
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskInner> {
         self.inner.exclusive_access()
     }
+
+    pub fn from_weak(weak: &Weak<Self>) -> Arc<Self> {
+        weak.upgrade().expect("unexpectly free task control block")
+    }
+}
+
+impl Display for Task {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("task_{}, task_name={}", self.pid, self.name))
+    }
 }
 
 pub fn fork_task(parent: &Arc<Task>) -> Arc<Task> {
     let new_pid = alloc_pid();
-
     let p_inner = parent.inner_exclusive_access();
+    // init child task
+    let child_task = Arc::from(Task {
+        pid: new_pid.clone(),
+        name: parent.name.clone(),
+        start_time_ms: get_time_ms(),
+        kernel_stack: alloc_kernel_stack(new_pid.clone()),
+        inner: unsafe { UPSafeCell::new(TaskInner::default()) },
+    });
 
+    let mut child_inner = child_task.inner_exclusive_access();
+    // init basic
+    {
+        child_inner.syscall_times = [0; MAX_SYSCALL_NUM];
+        child_inner.state = TaskState::Ready;
+    }
     // init new memory_set
-    let (new_ms, trap_ctx_ppn) = {
+    let trap_ctx_ppn = {
         let ms = MemorySet::from_existed_user(&p_inner.addr_space);
         let trap_ctx_ppn = ms
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()
             .ppn();
-        (ms, trap_ctx_ppn)
-    };
-    // init child task
-    let child_task = Task {
-        pid: new_pid.clone(),
-        name: parent.name.clone(),
-        start_time_ms: get_time_ms(),
-        kernel_stack: alloc_kernel_stack(new_pid.clone()),
-        inner: unsafe {
-            UPSafeCell::new(TaskInner {
-                trap_ctx_ppn,
-                state: TaskState::Ready,
-                syscall_times: p_inner.syscall_times.clone(),
-                addr_space: new_ms,
-                children: Vec::new(),
-                exit_code: 0,
-            })
-        },
+        child_inner.addr_space = ms;
+        child_inner.trap_ctx_ppn = trap_ctx_ppn;
+        trap_ctx_ppn
     };
     // init new trapctx
     {
-        let child_inner = child_task.inner_exclusive_access();
         let kernel_stack_top = child_task.kernel_stack.position().1;
-
         trap_ctx_ppn
             .get_bytes_array()
             .copy_from_slice(p_inner.trap_ctx_ppn.get_bytes_array());
@@ -168,7 +179,7 @@ pub fn fork_task(parent: &Arc<Task>) -> Arc<Task> {
         child_trapctx.set_reg_a(10, 0); // fork return 0 to child.
         child_trapctx.kernel_sp = kernel_stack_top;
     }
-    let child_task = Arc::from(child_task);
+    drop(child_inner);
     add_task(Arc::clone(&child_task));
     child_task
 }

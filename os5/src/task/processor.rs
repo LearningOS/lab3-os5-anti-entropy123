@@ -1,6 +1,6 @@
 use core::cell::RefMut;
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use lazy_static::lazy_static;
 
 use super::Task;
@@ -25,6 +25,13 @@ impl Processor {
         };
         self.cur_task = None;
         Some(cur_task)
+    }
+
+    pub fn weak_task(&mut self) -> Option<Weak<Task>> {
+        match &self.cur_task {
+            None => return None,
+            Some(task) => Some(Arc::downgrade(&task)),
+        }
     }
 }
 

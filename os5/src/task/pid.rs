@@ -22,6 +22,7 @@ impl PidAllocator {
         self.current += 1;
         PidHandle(self.current)
     }
+    #[allow(dead_code)]
     fn dealloc(&mut self) -> PidHandle {
         PidHandle(0)
     }

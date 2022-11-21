@@ -1,12 +1,16 @@
 mod pointer;
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    string::ToString,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 
 use crate::{
     config::MAX_SYSCALL_NUM,
     mm::{MapPermission, VirtAddr},
     syscall::pointer::from_user_ptr_to_str,
-    task::{fork_task, run_next_task, switch_task, Task, TaskState},
+    task::{fork_task, pop_cur_task, run_next_task, switch_task, Task, TaskState},
     timer::{self, get_time_ms},
 };
 
@@ -25,10 +29,12 @@ enum Syscall {
     Fork,
     WaitPid,
     GetPid,
+    Read,
 }
 impl Syscall {
     fn from(n: usize) -> Result<Syscall, ()> {
         Ok(match n {
+            63 => Self::Read,          // 0x3f
             64 => Self::Write,         // 0x40
             93 => Self::Exit,          // 0x5d
             124 => Self::Yield,        // 0x7c
@@ -50,21 +56,23 @@ impl Syscall {
 type SyscallResult = Result<isize, ()>;
 
 impl Syscall {
-    fn handle(&self, task: Arc<Task>, arg1: usize, arg2: usize, arg3: usize) {
+    fn handle(&self, task: Weak<Task>, arg1: usize, arg2: usize, arg3: usize) {
         let ret: SyscallResult = match self {
-            Syscall::Write => sys_write(Arc::clone(&task), arg1, arg2, arg3),
-            Syscall::Exit => sys_exit(task, arg1 as i32),
-            Syscall::GetTimeOfDay => sys_gettimeofday(Arc::clone(&task), arg1, arg2),
-            Syscall::Yield => sys_yield(task),
-            Syscall::TaskInfo => sys_taskinfo(Arc::clone(&task), arg1),
-            Syscall::Mmap => sys_mmap(Arc::clone(&task), arg1, arg2, arg3),
-            Syscall::Munmap => sys_unmmap(Arc::clone(&task), arg1, arg2),
-            Syscall::Fork => sys_fork(Arc::clone(&task)),
-            Syscall::WaitPid => sys_waitpid(Arc::clone(&task), arg1 as isize, arg2),
-            Syscall::GetPid => sys_getpid(Arc::clone(&task)),
+            Syscall::Write => sys_write(Weak::clone(&task), arg1, arg2, arg3),
+            Syscall::Exit => sys_exit(Task::from_weak(&task), arg1 as i32),
+            Syscall::GetTimeOfDay => sys_gettimeofday(Weak::clone(&task), arg1, arg2),
+            Syscall::Yield => sys_yield(Task::from_weak(&task)),
+            Syscall::TaskInfo => sys_taskinfo(Weak::clone(&task), arg1),
+            Syscall::Mmap => sys_mmap(Weak::clone(&task), arg1, arg2, arg3),
+            Syscall::Munmap => sys_unmmap(Weak::clone(&task), arg1, arg2),
+            Syscall::Fork => sys_fork(Weak::clone(&task)),
+            Syscall::WaitPid => sys_waitpid(Weak::clone(&task), arg1 as isize, arg2),
+            Syscall::GetPid => sys_getpid(Weak::clone(&task)),
+            Syscall::Read => sys_read(Weak::clone(&task)),
             // _ => todo!("unsupported syscall handle function, syscall={:?}", self),
         };
         let ret = ret.unwrap_or(-1);
+        let task = Task::from_weak(&task);
         let a0 = {
             let inner = task.inner_exclusive_access();
             let trap_ctx = inner.trap_context();
@@ -80,34 +88,40 @@ impl Syscall {
     }
 }
 
-pub fn syscall_handler(ctx: Arc<Task>) {
+pub fn syscall_handler(weak_task: Weak<Task>) {
     let (syscall_num, a0, a1, a2) = {
-        let inner = ctx.inner_exclusive_access();
+        let task = Task::from_weak(&weak_task);
+        let mut inner = task.inner_exclusive_access();
         let trap_ctx = inner.trap_context();
-        (
-            trap_ctx.reg_a(7),
+        let syscall_num = trap_ctx.reg_a(7);
+        let ret = (
+            syscall_num,
             trap_ctx.reg_a(0),
             trap_ctx.reg_a(1),
             trap_ctx.reg_a(2),
-        )
+        );
+        inner.syscall_times[syscall_num] += 1;
+        ret
     };
-    {
-        ctx.inner_exclusive_access().syscall_times[syscall_num] += 1;
-    }
-    let syscall = Syscall::from(syscall_num).unwrap_or_else(|_| sys_exit(Arc::clone(&ctx), 1));
 
-    log::info!(
-        "task_{}({}) syscall_handler, num={}, name={:?}",
-        ctx.pid,
-        ctx.name,
-        syscall_num,
-        syscall
-    );
+    let syscall =
+        Syscall::from(syscall_num).unwrap_or_else(|_| sys_exit(pop_cur_task().unwrap(), 1));
+
+    {
+        let task = Task::from_weak(&weak_task);
+        log::info!(
+            "{} syscall_handler, num={}, name={:?}",
+            task,
+            syscall_num,
+            syscall
+        );
+    }
     // log::info!("syscall_times={:?}", ctx.syscall_times);
-    syscall.handle(ctx, a0, a1, a2)
+    syscall.handle(weak_task, a0, a1, a2)
 }
 
-fn sys_write(task: Arc<Task>, fd: usize, buf: usize, len: usize) -> SyscallResult {
+fn sys_write(task: Weak<Task>, fd: usize, buf: usize, len: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     let user_buf = from_user_ptr_to_str(&task, buf, len);
 
     log::info!("sys_write args, fd={}, buf=0x{:x}, len={}", fd, buf, len);
@@ -118,7 +132,8 @@ fn sys_write(task: Arc<Task>, fd: usize, buf: usize, len: usize) -> SyscallResul
     Ok(len as isize)
 }
 
-fn sys_gettimeofday(task: Arc<Task>, timeval_ptr: usize, _tz: usize) -> SyscallResult {
+fn sys_gettimeofday(task: Weak<Task>, timeval_ptr: usize, _tz: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     let time = from_user_ptr(&task, timeval_ptr);
     timer::set_time_val(time);
     Ok(0)
@@ -137,6 +152,13 @@ pub fn sys_exit(task: Arc<Task>, exit_code: i32) -> ! {
         inner.set_state(TaskState::Exited);
         inner.exit_code = exit_code;
     }
+    log::info!(
+        "{}, ready to exit, exit_code={}, Arc count={}",
+        task,
+        exit_code,
+        Arc::strong_count(&task)
+    );
+    drop(task);
     run_next_task()
 }
 
@@ -147,7 +169,8 @@ pub struct TaskInfo {
     pub exec_time: usize,
 }
 
-fn sys_taskinfo(task: Arc<Task>, user_info: usize) -> SyscallResult {
+fn sys_taskinfo(task: Weak<Task>, user_info: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     let syscall_times = {
         let inner = task.inner_exclusive_access();
         inner.syscall_times
@@ -167,7 +190,8 @@ fn sys_taskinfo(task: Arc<Task>, user_info: usize) -> SyscallResult {
     Ok(0)
 }
 
-fn sys_mmap(task: Arc<Task>, start: usize, len: usize, port: usize) -> SyscallResult {
+fn sys_mmap(task: Weak<Task>, start: usize, len: usize, port: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     log::info!(
         "task_{}({}) sys_mmap, receive args start=0x{:x}, end=0x{:x}, len=0x{:x}, port=0x{:x}",
         task.pid,
@@ -208,14 +232,16 @@ fn sys_mmap(task: Arc<Task>, start: usize, len: usize, port: usize) -> SyscallRe
     let start = VirtAddr::from(start);
     if start.page_offset() != 0 {
         return Err(());
-    }
-    task.inner_exclusive_access()
+    };
+    let mut inner = task.inner_exclusive_access();
+    inner
         .addr_space
         .insert_framed_area(start, end, perm)
         .map(|_| 0)
 }
 
-fn sys_unmmap(task: Arc<Task>, start: usize, len: usize) -> SyscallResult {
+fn sys_unmmap(task: Weak<Task>, start: usize, len: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     log::info!(
         "task_{}({}) sys_unmmap, receive args start=0x{:x}, len=0x{:x}",
         task.pid,
@@ -228,20 +254,23 @@ fn sys_unmmap(task: Arc<Task>, start: usize, len: usize) -> SyscallResult {
     if start.page_offset() != 0 {
         return Err(());
     }
-    task.inner_exclusive_access()
+    let mut inner = task.inner_exclusive_access();
+    inner
         .addr_space
         .unmap_area(task.pid.clone(), start, end)
         .map(|_| 0)
 }
 
-fn sys_fork(task: Arc<Task>) -> SyscallResult {
+fn sys_fork(task: Weak<Task>) -> SyscallResult {
+    let task = Task::from_weak(&task);
     let child = fork_task(&task);
     let child_pid = child.pid.0;
     task.inner_exclusive_access().children.push(child);
     Ok(child_pid as isize)
 }
 
-fn sys_waitpid(task: Arc<Task>, target_pid: isize, exit_code: usize) -> SyscallResult {
+fn sys_waitpid(task: Weak<Task>, target_pid: isize, exit_code: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
     let target_children_pid = {
         let children = { &task.inner_exclusive_access().children };
 
@@ -278,6 +307,11 @@ fn sys_waitpid(task: Arc<Task>, target_pid: isize, exit_code: usize) -> SyscallR
             .expect("should have this pid child");
         inner.children.remove(idx)
     };
+    log::info!(
+        "{}, have been wait, arc count={}",
+        target_child,
+        Arc::strong_count(&target_child)
+    );
 
     let exit_code: &mut i32 = from_user_ptr(&task, exit_code);
     *exit_code = {
@@ -290,6 +324,12 @@ fn sys_waitpid(task: Arc<Task>, target_pid: isize, exit_code: usize) -> SyscallR
     Ok(target_children_pid.0 as isize)
 }
 
-fn sys_getpid(task: Arc<Task>) -> SyscallResult {
+fn sys_getpid(task: Weak<Task>) -> SyscallResult {
+    let task = Task::from_weak(&task);
     Ok(task.pid.0 as isize)
+}
+
+fn sys_read(task: Weak<Task>) -> SyscallResult {
+    let _task = Task::from_weak(&task);
+    todo!()
 }

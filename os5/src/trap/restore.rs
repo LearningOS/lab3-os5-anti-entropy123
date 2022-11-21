@@ -65,6 +65,7 @@ pub fn restore(task_ctx: Arc<Task>) -> ! {
         assert!(trampoline.readable());
     }
 
+    drop(task_ctx);
     unsafe {
         stvec::write(TRAMPOLINE as usize, TrapMode::Direct);
         core::arch::asm!(
