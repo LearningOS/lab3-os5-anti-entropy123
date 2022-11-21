@@ -88,20 +88,20 @@ pub struct Task {
 impl Task {
     pub fn new(name: &str) -> Arc<Task> {
         let new_pid = alloc_pid();
-        let mut task = Task {
+        let task = Task {
             pid: new_pid.clone(),
             name: name.to_owned(),
             start_time_ms: get_time_ms(),
             kernel_stack: alloc_kernel_stack(new_pid),
             inner: unsafe { UPSafeCell::new(TaskInner::default()) },
         };
-        task.init(name);
+        let elf = get_app_elf(name).unwrap();
+        task.init(elf);
         Arc::new(task)
     }
 
-    fn init(&mut self, name: &str) {
+    fn init(&self, elf_data: &[u8]) {
         let kernel_stack_top = self.kernel_stack.position().1;
-        let elf_data = get_app_elf(name);
         let (ms, user_stack, entrypoint) = MemorySet::from_elf(elf_data);
 
         log::debug!(
@@ -122,6 +122,11 @@ impl Task {
         inner
             .trap_context()
             .init(user_stack, entrypoint, kernel_stack_top)
+    }
+    pub fn exec(&self, name: &str) -> Result<(), ()> {
+        let elf = get_app_elf(name)?;
+        self.init(elf);
+        Ok(())
     }
 
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskInner> {

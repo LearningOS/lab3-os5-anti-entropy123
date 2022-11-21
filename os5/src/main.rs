@@ -57,10 +57,10 @@ pub fn rust_main() -> ! {
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     loader::list_apps();
-    // task::add_initproc();
-    // info!("after initproc!");
-    batch_add_app();
-    // task::add_task(Task::new("ch3_taskinfo"));
+    task::add_initproc();
+    info!("after initproc!");
+    task::add_task(Task::new("ch5_usertest"));
+    // batch_add_app();
     task::run_next_task()
 }
 
@@ -89,6 +89,7 @@ pub fn batch_add_app() {
     batch_processing_task.push(Task::new("ch5_getpid"));
     batch_processing_task.push(Task::new("ch5b_forktree"));
     batch_processing_task.push(Task::new("ch5b_forktest2"));
+    batch_processing_task.push(Task::new("ch5_setprio"));
 
     for task in batch_processing_task.iter() {
         add_task(Arc::clone(task))

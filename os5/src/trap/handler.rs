@@ -3,7 +3,6 @@ use crate::{
     task::{pop_cur_task, run_task, switch_task, weak_cur_task, Task, TaskState},
     timer::set_next_trigger,
 };
-use alloc::sync::Weak;
 use riscv::register::{
     scause::{self, Exception, Interrupt, Trap},
     stval,
@@ -36,7 +35,7 @@ pub fn trap_handler() -> ! {
                     .trap_context()
                     .sepc += 4;
             };
-            syscall::syscall_handler(Weak::clone(&weak_task));
+            syscall::syscall_handler(&weak_task);
             {
                 Task::from_weak(&weak_task)
                     .inner_exclusive_access()
