@@ -267,11 +267,6 @@ impl MemorySet {
 
         let entrypoint = elf.header.pt2.entry_point();
         log::debug!("parse elf, entrypoint={}", entrypoint);
-        assert!(
-            entrypoint != 0,
-            "get a wrong entrypoint (=0x{:?})?",
-            entrypoint
-        );
         (memory_set, user_stack_top, entrypoint as usize)
     }
 
