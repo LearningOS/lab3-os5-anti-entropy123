@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use lazy_static::*;
+use lazy_static::lazy_static;
 
 pub fn get_num_app() -> usize {
     extern "C" {
@@ -8,19 +8,29 @@ pub fn get_num_app() -> usize {
     unsafe { (_num_app as usize as *const usize).read_volatile() }
 }
 
-pub fn get_app_data(app_id: usize) -> &'static [u8] {
+fn get_appid_by_name(name: &str) -> Result<usize, ()> {
+    (0..get_num_app()).find(|&i| APP_NAMES[i] == name).ok_or(())
+}
+
+pub fn get_app_elf(name: &str) -> Result<&'static [u8], ()> {
     extern "C" {
         fn _num_app();
     }
     let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
     let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
-    assert!(app_id < num_app);
+    let app_id = match get_appid_by_name(name) {
+        Ok(id) => id,
+        Err(_) => {
+            log::error!("wrong app name? name={}", name);
+            return Err(());
+        }
+    };
     unsafe {
-        core::slice::from_raw_parts(
+        Ok(core::slice::from_raw_parts(
             app_start[app_id] as *const u8,
             app_start[app_id + 1] - app_start[app_id],
-        )
+        ))
     }
 }
 
@@ -48,13 +58,6 @@ lazy_static! {
     };
 }
 
-pub fn get_app_data_by_name(name: &str) -> Option<&'static [u8]> {
-    let num_app = get_num_app();
-    (0..num_app)
-        .find(|&i| APP_NAMES[i] == name)
-        .map(get_app_data)
-}
-
 pub fn list_apps() {
     println!("/**** APPS ****");
     for app in APP_NAMES.iter() {
@@ -62,3 +65,19 @@ pub fn list_apps() {
     }
     println!("**************/");
 }
+
+// pub fn alloc_kernel_stack(pid: PidHandle) -> (usize, usize) {
+//     // unsafe { KS_MGR.alloc_kernel_stack(pid) }
+//     get_ks_mgr().alloc_kernel_stack(pid)
+// }
+
+// pub fn get_kernel_stack_top(pid: &PidHandle) -> PhysAddr {
+//     // let (_, stack_top) = unsafe { KS_MGR.lookup_kernel_stack(pid) };
+//     let (_, stack_top) = get_ks_mgr().lookup_kernel_stack(pid);
+//     PhysAddr::from(stack_top)
+// }
+
+// pub fn lookup_kernel_stack(pid: &PidHandle) -> (usize, usize) {
+//     // unsafe { KS_MGR.lookup_kernel_stack(pid) }
+//     get_ks_mgr().lookup_kernel_stack(pid)
+// }
