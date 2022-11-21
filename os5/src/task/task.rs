@@ -44,6 +44,8 @@ pub struct TaskInner {
     pub addr_space: MemorySet,
     pub children: Vec<Arc<Task>>,
     pub exit_code: i32,
+    pub priority: u32,
+    pub pass: usize,
 }
 
 impl Default for TaskInner {
@@ -55,6 +57,8 @@ impl Default for TaskInner {
             addr_space: MemorySet::default(),
             children: Vec::new(),
             exit_code: 0,
+            priority: 16,
+            pass: 0,
         }
     }
 }
@@ -127,6 +131,20 @@ impl Task {
         let elf = get_app_elf(name)?;
         self.init(elf);
         Ok(())
+    }
+
+    pub fn spawn(name: &str) -> Result<Arc<Task>, ()> {
+        let new_pid = alloc_pid();
+        let task = Task {
+            pid: new_pid.clone(),
+            name: name.to_owned(),
+            start_time_ms: get_time_ms(),
+            kernel_stack: alloc_kernel_stack(new_pid),
+            inner: unsafe { UPSafeCell::new(TaskInner::default()) },
+        };
+        let elf = get_app_elf(name)?;
+        task.init(elf);
+        Ok(Arc::new(task))
     }
 
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskInner> {

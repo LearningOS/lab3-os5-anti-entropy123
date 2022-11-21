@@ -12,7 +12,7 @@ pub const MEMORY_END: usize = 0x88000000;
 // syscall/user config
 pub const MAX_SYSCALL_NUM: usize = 500;
 #[allow(dead_code)]
-pub const BIG_STRIDE: usize = usize::MAX;
+pub const BIG_STRIDE: usize = 500000;
 
 // user space config
 pub const USER_STACK_PAGE_NUM: usize = 20;

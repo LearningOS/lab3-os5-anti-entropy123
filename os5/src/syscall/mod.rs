@@ -11,7 +11,7 @@ use crate::{
     mm::{MapPermission, VirtAddr},
     sbi::console_getchar,
     syscall::pointer::{from_user_ptr_to_slice, from_user_ptr_to_str},
-    task::{fork_task, pop_cur_task, run_next_task, switch_task, Task, TaskState},
+    task::{add_task, fork_task, pop_cur_task, run_next_task, switch_task, Task, TaskState},
     timer::{self, get_time_ms},
 };
 
@@ -33,6 +33,7 @@ enum Syscall {
     Read,
     SetPriority,
     Exec,
+    Spawn,
 }
 impl Syscall {
     fn from(n: usize) -> Result<Syscall, ()> {
@@ -49,6 +50,7 @@ impl Syscall {
             221 => Self::Exec,         // 0xdd
             222 => Self::Mmap,         // 0xde
             260 => Self::WaitPid,      // 0x104
+            400 => Self::Spawn,        // 0x190
             410 => Self::TaskInfo,     // 0x19a
             _ => {
                 log::warn!("unsupported syscall: {}", n.to_string());
@@ -76,6 +78,7 @@ impl Syscall {
             Syscall::Read => sys_read(task.upgrade().unwrap(), arg1, arg2, arg3),
             Syscall::SetPriority => sys_set_priority(task, arg1 as isize),
             Syscall::Exec => sys_exec(task, arg1),
+            Syscall::Spawn => sys_spawn(task, arg1),
             // _ => todo!("unsupported syscall handle function, syscall={:?}", self),
         };
         let ret = ret.unwrap_or(-1);
@@ -340,23 +343,20 @@ const FD_STDIN: usize = 0;
 
 fn sys_read(task: Arc<Task>, fd: usize, buf: usize, len: usize) -> SyscallResult {
     // let task = Task::from_weak(&task);
+    if len != 1 {
+        log::error!("{}, Only support len = 1 in sys_read! len={}", task, len);
+        return Err(());
+    }
     match fd {
         FD_STDIN => {
-            assert_eq!(len, 1, "Only support len = 1 in sys_read!");
-            let c: usize;
-            loop {
-                c = console_getchar();
-                if c == 0 {
-                    drop(task);
-                    switch_task(pop_cur_task().unwrap());
-                } else {
-                    break;
-                }
+            let c = console_getchar();
+            if c == 0 {
+                drop(task);
+                switch_task(pop_cur_task().unwrap());
             }
-            let ch = c as u8;
             let buffer: &mut [u8] = from_user_ptr_to_slice(&task, buf, len);
-            buffer[0] = ch;
-            Ok(1)
+            buffer[0] = c as u8;
+            Ok(len as isize)
         }
         _ => {
             log::error!("{}, wrong fd? fd={}", task, fd);
@@ -365,17 +365,36 @@ fn sys_read(task: Arc<Task>, fd: usize, buf: usize, len: usize) -> SyscallResult
     }
 }
 
-fn sys_set_priority(_task: &Weak<Task>, priority: isize) -> SyscallResult {
-    // let task = Task::from_weak(task);
-    Ok(if priority > 1 { priority } else { -1 })
+fn sys_set_priority(task: &Weak<Task>, priority: isize) -> SyscallResult {
+    let task = Task::from_weak(&task);
+    if priority > 1 {
+        task.inner_exclusive_access().priority = priority as u32;
+        Ok(priority)
+    } else {
+        Err(())
+    }
 }
 
 fn sys_exec(task: &Weak<Task>, path: usize) -> SyscallResult {
     let task = Task::from_weak(&task);
     let path = from_user_cstring(&task, path);
-    log::info!("{}, exec {}", task, path);
+    log::info!("sys_exec, {}, target app={}", task, path);
     task.exec(&path)?;
-    drop(path);
-    drop(task);
-    switch_task(pop_cur_task().unwrap());
+    // drop(path);
+    // drop(task);
+    // restore(pop_cur_task().unwrap());
+    Ok(0)
+}
+
+fn sys_spawn(task: &Weak<Task>, path: usize) -> SyscallResult {
+    let task = Task::from_weak(&task);
+    let path = from_user_cstring(&task, path);
+    log::info!("sys_spawn, {}, target app={}", task, path);
+    let child = Task::spawn(&path)?;
+    let child_pid = child.pid.0;
+    task.inner_exclusive_access()
+        .children
+        .push(Arc::clone(&child));
+    add_task(child);
+    Ok(child_pid as isize)
 }

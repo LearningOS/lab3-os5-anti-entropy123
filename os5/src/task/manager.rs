@@ -21,12 +21,24 @@ impl TaskManager {
     }
 
     pub fn find_next_ready_task(&mut self) -> Option<Arc<Task>> {
-        let task = match self.task_list.pop_front() {
-            None => return None,
-            Some(task) => task,
-        };
-        assert!(task.inner_exclusive_access().state == TaskState::Ready);
-        Some(task)
+        if self.task_list.is_empty() {
+            return None;
+        }
+        let mut smallest_pass_idx = 0;
+        let mut smallest_pass = self.task_list[0].inner_exclusive_access().pass;
+        for i in 1..self.task_list.len() {
+            let pass = self.task_list[i].inner_exclusive_access().pass;
+            if pass < smallest_pass {
+                smallest_pass_idx = i;
+                smallest_pass = pass;
+            }
+        }
+
+        Some(
+            self.task_list
+                .remove(smallest_pass_idx)
+                .expect("wrong smallest_pass_idx?"),
+        )
     }
 
     pub fn add_task(&mut self, task: Arc<Task>) {

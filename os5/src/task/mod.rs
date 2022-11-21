@@ -7,6 +7,7 @@ mod task;
 use alloc::sync::{Arc, Weak};
 
 use crate::{
+    config::BIG_STRIDE,
     task::{manager::TM, processor::processor_inner},
     trap::restore,
     BATCH_PROCESSING_TASK,
@@ -59,6 +60,10 @@ pub fn run_next_task() -> ! {
 }
 
 pub fn switch_task(previous_task: Arc<Task>) -> ! {
+    {
+        let mut inner = previous_task.inner_exclusive_access();
+        inner.pass += BIG_STRIDE / (inner.priority as usize);
+    }
     add_task(previous_task);
     run_next_task();
 }
